@@ -83,7 +83,7 @@ void Forest::initCpp(std::string dependent_variable_name, MemoryMode memory_mode
   init(loadDataFromFile(input_file), mtry, output_prefix, num_trees, seed, num_threads, importance_mode,
       min_node_size, prediction_mode, sample_with_replacement, unordered_variable_names, memory_saving_splitting,
       splitrule, predict_all, sample_fraction_vector, alpha, minprop, holdout, prediction_type, num_random_splits,
-      false, max_depth, regularization_factor, regularization_usedepth);
+      false, max_depth, regularization_factor, regularization_usedepth, 0);
 
   if (prediction_mode) {
     loadFromFile(load_forest_filename);
@@ -142,7 +142,7 @@ void Forest::initR(std::unique_ptr<Data> input_data, uint mtry, uint num_trees, 
     std::vector<std::vector<size_t>>& manual_inbag, bool predict_all, bool keep_inbag,
     std::vector<double>& sample_fraction, double alpha, double minprop, bool holdout, PredictionType prediction_type,
     uint num_random_splits, bool order_snps, uint max_depth, const std::vector<double>& regularization_factor,
-    bool regularization_usedepth) {
+    bool regularization_usedepth, uint importance_seed) {
 
   this->memory_mode = memory_mode;
   this->verbose_out = verbose_out;
@@ -151,7 +151,7 @@ void Forest::initR(std::unique_ptr<Data> input_data, uint mtry, uint num_trees, 
   init(std::move(input_data), mtry, "", num_trees, seed, num_threads, importance_mode, min_node_size,
       prediction_mode, sample_with_replacement, unordered_variable_names, memory_saving_splitting, splitrule,
       predict_all, sample_fraction, alpha, minprop, holdout, prediction_type, num_random_splits, order_snps, max_depth,
-      regularization_factor, regularization_usedepth);
+      regularization_factor, regularization_usedepth, importance_seed);
 
   // Set variables to be always considered for splitting
   if (!always_split_variable_names.empty()) {
@@ -185,7 +185,7 @@ void Forest::init(std::unique_ptr<Data> input_data, uint mtry, std::string outpu
     bool prediction_mode, bool sample_with_replacement, const std::vector<std::string>& unordered_variable_names,
     bool memory_saving_splitting, SplitRule splitrule, bool predict_all, std::vector<double>& sample_fraction,
     double alpha, double minprop, bool holdout, PredictionType prediction_type, uint num_random_splits, bool order_snps,
-    uint max_depth, const std::vector<double>& regularization_factor, bool regularization_usedepth) {
+    uint max_depth, const std::vector<double>& regularization_factor, bool regularization_usedepth, uint importance_seed) {
 
   // Initialize data with memmode
   this->data = std::move(input_data);
@@ -230,7 +230,8 @@ void Forest::init(std::unique_ptr<Data> input_data, uint mtry, std::string outpu
   this->max_depth = max_depth;
   this->regularization_factor = regularization_factor;
   this->regularization_usedepth = regularization_usedepth;
-
+  this->importance_seed = importance_seed;
+  
   // Set number of samples and variables
   num_samples = data->getNumRows();
   num_independent_variables = data->getNumCols();
@@ -260,7 +261,15 @@ void Forest::init(std::unique_ptr<Data> input_data, uint mtry, std::string outpu
 
   // Permute samples for corrected Gini importance
   if (importance_mode == IMP_GINI_CORRECTED) {
-    data->permuteSampleIDs(random_number_generator);
+    if (importance_seed == 0) {
+      data->permuteSampleIDs(random_number_generator);
+    } else {
+      // Create a specialized generator for permutation 
+      // So that results from mutliple runs can be combined
+      std::mt19937_64 importance_random_number_generator;
+      importance_random_number_generator.seed(importance_seed);
+      data->permuteSampleIDs(importance_random_number_generator);
+    }
   }
 
   // Order SNP levels if in "order" splitting
@@ -332,6 +341,7 @@ void Forest::writeOutput() {
     *verbose_out << "Variable importance mode:          " << importance_mode << std::endl;
     *verbose_out << "Memory mode:                       " << memory_mode << std::endl;
     *verbose_out << "Seed:                              " << seed << std::endl;
+    *verbose_out << "Importance seed:                   " << importance_seed << std::endl;
     *verbose_out << "Number of threads:                 " << num_threads << std::endl;
     *verbose_out << std::endl;
   }
